@@ -6,19 +6,21 @@ from src.io.loaders import read_table
 from src.validation.validators import validate_portfolio
 from src.portfolio.analytics import analyze, ladder, issuer_concentration
 from src.portfolio.scenarios import scenarios
+from src.portfolio.currencies import normalize_positions, consolidate
+from src.portfolio.rebalance import simulate
 from src.presentation.views import display_table, horizontal_chart, sensitivity_chart
 
 st.set_page_config(page_title='Cartera de bonos', layout='wide')
 st.title('Cartera de bonos y ON')
 st.caption('V1 · Flujos determinados · ACT/365 fijo · Tasas efectivas anuales')
-st.info('El valor de mercado debe incluir intereses corridos y estar en la moneda de los flujos. Los importes de pagos ya representan la tenencia: no se multiplican por nominal.')
+st.info('El valor de mercado debe incluir intereses corridos. Moneda identifica los pagos; Moneda MV identifica el valor de mercado (opcional: se asume igual a Moneda). Los importes de pagos ya representan la tenencia: no se multiplican por nominal.')
 with st.sidebar:
     valuation = st.date_input('Fecha de valuación', date.today(), min_value=date(1900,1,1), max_value=date(2200,1,1))
     decimal = st.selectbox('Separador decimal para números de texto', ['.', ','])
     st.caption('Sin separadores de miles. Fechas: celdas Excel o AAAA-MM-DD. CSV UTF-8.')
     pfile = st.file_uploader('Pagos futuros', type=['xlsx','csv'])
     vfile = st.file_uploader('Posiciones actuales', type=['xlsx','csv'])
-    st.download_button('Plantilla de posiciones', 'Ticker,Market Value,Nominal,Moneda,Emisor\n', 'posiciones.csv', 'text/csv')
+    st.download_button('Plantilla de posiciones', 'Ticker,Market Value,Nominal,Moneda,Emisor,Moneda MV\n', 'posiciones.csv', 'text/csv')
     demo = st.checkbox('Usar ejemplo sintético', value=False)
 if demo:
     pfile, vfile = 'sample_data/pagos_demo.csv', 'sample_data/posiciones_demo.csv'
@@ -46,8 +48,35 @@ if issues:
 if any(x['Nivel'] == 'error' for x in issues):
     st.error('Corregí los errores en los archivos antes de calcular.')
     st.stop()
+needs_fx = positions.Moneda.nunique() > 1 or (positions.Moneda != positions['Moneda MV']).any()
+fx = 1.0
+fx_date = valuation
+fx_source = 'No requiere conversión'
+base = positions.Moneda.iloc[0]
+consolidated = consolidated_issuers = currency_exposure = None
+if needs_fx:
+    st.subheader('Tipo de cambio para valuación y patrimonio')
+    st.caption('Sólo convierte valores actuales. No proyecta el dólar ni convierte pagos futuros. Moneda = moneda de pagos; Moneda MV = moneda del valor ingresado.')
+    fx = st.number_input('TC: ARS por USD', min_value=0.0, value=0.0, step=10.0)
+    fx_date = st.date_input('Fecha del tipo de cambio', valuation)
+    fx_source = st.text_input('Fuente del tipo de cambio', placeholder='Ej.: MEP del broker, cierre de la fecha')
+    base = st.selectbox('Moneda base del patrimonio', ['USD','ARS'])
+    if fx <= 0 or not fx_source.strip():
+        st.info('Ingresá TC positivo y fuente para continuar. No se usa una cotización supuesta automáticamente.')
+        st.stop()
+    if fx_date != valuation:
+        st.warning('La fecha del TC difiere de la valuación; la conversión puede no representar esa fecha.')
+    try:
+        consolidated, consolidated_issuers, currency_exposure = consolidate(positions, base, fx)
+        positions = normalize_positions(positions, fx)
+    except ValueError as e:
+        st.error(str(e)); st.stop()
+else:
+    positions['Valor de mercado original'] = positions['Market Value']
+    if base in ['USD','ARS']:
+        consolidated, consolidated_issuers, currency_exposure = consolidate(positions, base, fx)
 if positions.Moneda.nunique() > 1:
-    st.warning('No se suman monedas distintas. Cada análisis usa sólo la moneda seleccionada.')
+    st.warning('TIR, duration y sensibilidad se calculan por moneda de pagos. El patrimonio consolidado no tiene una TIR multimoneda.')
 currency = st.selectbox('Moneda de análisis', sorted(positions.Moneda.unique()))
 positions = positions[positions.Moneda == currency]
 future = future[future.Ticker.isin(positions.Ticker)]
@@ -59,8 +88,15 @@ except ValueError as e:
 st.info(f"Moneda: {currency} · Fecha de valuación: {valuation:%d/%m/%Y}")
 issuers = issuer_concentration(instruments)
 sens = scenarios(summary)
-resume_tab, instruments_tab, flows_tab, risk_tab = st.tabs(['Resumen', 'Instrumentos', 'Flujos', 'Riesgos'])
+resume_tab, instruments_tab, flows_tab, risk_tab, rebalance_tab = st.tabs(['Resumen', 'Instrumentos', 'Flujos', 'Riesgos', 'Rebalanceo'])
 with resume_tab:
+    if consolidated is not None:
+        st.subheader(f'Patrimonio consolidado · {base}')
+        st.metric('Patrimonio total', f"{consolidated['Valor consolidado'].sum():,.2f} {base}")
+        st.caption(f'TC: {fx:,.2f} ARS/USD · Fecha: {fx_date:%d/%m/%Y} · Fuente: {fx_source}' if needs_fx else 'Todas las posiciones están en la misma moneda; no se requiere conversión.')
+        st.dataframe(display_table(currency_exposure), hide_index=True)
+        st.dataframe(display_table(consolidated_issuers), hide_index=True)
+        st.altair_chart(horizontal_chart(consolidated_issuers, 'Emisor', 'Peso consolidado', percent=True), use_container_width=True)
     st.subheader(f'Resumen de cartera · {currency}')
     cols = st.columns(3)
     cols[0].metric('Valor de mercado', f"{summary['Market Value']:,.2f} {currency}")
@@ -102,6 +138,23 @@ with risk_tab:
     st.caption('Aproximación de sensibilidad a desplazamientos paralelos de tasas individuales; no es una proyección de precios.')
     st.dataframe(display_table(sens), hide_index=True)
     st.altair_chart(sensitivity_chart(sens), use_container_width=True)
+with rebalance_tab:
+    st.subheader(f'Duration objetivo · {currency}')
+    st.caption('Reemplazo de igual valor de mercado, dentro de la moneda seleccionada, reinversión completa y sin costos. La compra es hipotética: no genera TIR ni calendario nuevos. Duration no equivale a vencimiento.')
+    sell_ticker = st.selectbox('Instrumento a vender', instruments.Ticker.tolist())
+    sale = instruments.loc[instruments.Ticker == sell_ticker].iloc[0]
+    amount = st.number_input(f'Importe a reemplazar ({currency})', min_value=0.0, max_value=float(sale['Market Value']), value=float(sale['Market Value']), step=1.0)
+    target = st.number_input('Modified duration objetivo (años)', min_value=0.0, value=float(summary['Modified']), step=0.1)
+    purchase = st.number_input('Modified duration de compra hipotética (años)', min_value=0.0, value=float(sale.Modified), step=0.1)
+    if amount > 0:
+        result = simulate(float(summary['Market Value']), float(summary['Modified']), amount, float(sale.Modified), target, purchase)
+        st.metric('Duration necesaria de la compra', f"{result['Duration necesaria de compra']:.2f} años")
+        if result['Duration necesaria de compra'] < 0:
+            st.warning('El objetivo no es alcanzable con esta venta y una compra de duration no negativa. Cambiá el importe o el instrumento vendido.')
+        st.dataframe(pd.DataFrame([result]).style.format('{:,.2f}'), hide_index=True)
+        st.caption('D final = D actual + (importe reemplazado / valor de cartera) × (D compra − D venta). La venta no puede superar la posición disponible.')
+    else:
+        st.info('Ingresá un importe de venta mayor que cero para simular.')
 with st.expander('Supuestos y fórmulas'):
     st.markdown('''**t = días reales / 365**. MV = Σ CF / (1+y)^t; y es anual efectiva, mayor que −100%.
 
@@ -115,7 +168,13 @@ La TIR no es rendimiento garantizado; supone cumplimiento de los flujos. Duratio
 # Export analyzed data; client uploads are kept in memory only.
 out = BytesIO()
 with pd.ExcelWriter(out, engine='openpyxl') as writer:
-    pd.DataFrame([{'Fecha de valuación': pd.Timestamp(valuation), 'Moneda de análisis': currency, 'Convención': 'ACT/365 fijo; tasa efectiva anual'}]).to_excel(writer, sheet_name='Contexto', index=False)
+    pd.DataFrame([{'Fecha de valuación': pd.Timestamp(valuation), 'Moneda de análisis': currency, 'Moneda base': base, 'TC ARS/USD': fx if needs_fx else None, 'Fecha TC': pd.Timestamp(fx_date) if needs_fx else None, 'Fuente TC': fx_source, 'Convención': 'ACT/365 fijo; tasa efectiva anual'}]).to_excel(writer, sheet_name='Contexto', index=False)
+    if consolidated is not None:
+        consolidated.to_excel(writer, sheet_name='Patrimonio', index=False)
+        consolidated_issuers.to_excel(writer, sheet_name='Emisores consolidados', index=False)
+        currency_exposure.to_excel(writer, sheet_name='Monedas', index=False)
+    if amount > 0:
+        pd.DataFrame([{**result, 'Instrumento vendido': sell_ticker, 'Moneda': currency, 'Duration venta': float(sale.Modified), 'Duration compra hipotética': purchase}]).to_excel(writer, sheet_name='Rebalanceo', index=False)
     issuers.to_excel(writer, sheet_name='Emisores', index=False)
     exported.to_excel(writer, sheet_name='Instrumentos', index=False)
     pd.DataFrame([summary]).to_excel(writer, sheet_name='Cartera', index=False)

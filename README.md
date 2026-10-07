@@ -71,3 +71,19 @@ La interfaz se organiza en Resumen, Instrumentos, Flujos y Riesgos. Los resultad
 Los emisores se agrupan por el nombre informado, quitando espacios externos; no se infieren grupos económicos ni se unifican nombres diferentes automáticamente. Completar nombres consistentemente. Los emisores faltantes aparecen bajo “Sin emisor informado”. Cada agrupación corresponde únicamente a la moneda seleccionada.
 
 El CSV de instrumentos incorpora moneda y fecha de valuación. El Excel incluye hojas Contexto y Emisores, además del detalle existente. Los formatos visuales no redondean los valores utilizados por el motor. La suite actual contiene 32 tests.
+
+## Monedas y patrimonio consolidado
+
+En posiciones, `Moneda` identifica la moneda de los pagos; la columna opcional `Moneda MV` identifica la moneda del Market Value ingresado. Si falta, se asume igual a Moneda para conservar compatibilidad. Pagos.xlsx no informa moneda: corresponde al usuario confirmar su correspondencia con cada posición. Moneda MV no es el ticker de negociación ni cambia la denominación del flujo.
+
+Para posiciones con monedas distintas o un valor de mercado en moneda diferente a sus pagos, completar un TC positivo **ARS por USD**, fecha y fuente. No hay cotización automática ni valor ilustrativo precargado. Esta conversión admite ARS y USD. Primero se lleva el valor actual a la moneda de sus pagos para calcular métricas; luego se consolida el patrimonio en USD o ARS. Los importes originales se conservan. Si fecha de TC y valuación difieren, se advierte.
+
+El resumen incorpora patrimonio total, distribución por moneda de pagos y concentración por emisor sobre valores convertidos. TIR, duration y sensibilidad siguen separadas por moneda. No se convierten pagos futuros ni se calcula XIRR multimoneda. El Excel incorpora Patrimonio, Emisores consolidados, Monedas y contexto de TC.
+
+## Simulador de duration objetivo
+
+En Rebalanceo elegir instrumento vendido, importe a reemplazar (hasta el valor disponible), modified duration objetivo y duration de compra hipotética. Fórmula: D final = D actual + (importe / valor de cartera) × (D compra − D venta). La duration necesaria se despeja de esa fórmula.
+
+Se supone misma moneda de pagos, reinversión completa de igual importe, sin costos, sin aportes/retiros y métricas constantes de las posiciones restantes. La simulación es independiente de la cartera real; no modifica posiciones ni inventa flujos de compra, TIR o concentración posteriores. Si la duration necesaria es negativa, el objetivo no es alcanzable con una compra de duration no negativa bajo esos supuestos. El Excel conserva los parámetros y resultados de la simulación cuando el importe es positivo.
+
+La suite actual contiene 35 tests, incluyendo conversiones, consolidación, simulación manual y recorrido Streamlit con cartera multimoneda.

@@ -29,10 +29,13 @@ def read_table(source, kind, decimal='.'):
         raise ValueError(f'Faltan columnas: {sorted(missing)}')
     if df.empty:
         raise ValueError('No hay filas de datos')
+    if kind == 'positions':
+        if 'Moneda MV' not in df.columns:
+            df['Moneda MV'] = df['Moneda']
     issues = []
     def issue(level, row, field, message):
         issues.append(dict(Nivel=level, Archivo=kind, Fila=row + 2, Campo=field, Mensaje=message))
-    for col in ['Ticker'] + (['Moneda', 'Emisor'] if kind == 'positions' else []):
+    for col in ['Ticker'] + (['Moneda', 'Moneda MV', 'Emisor'] if kind == 'positions' else []):
         for i, v in df[col].items():
             if pd.isna(v) or not str(v).strip():
                 issue('error' if col != 'Emisor' else 'warning', i, col, 'Valor vacío')

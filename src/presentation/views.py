@@ -6,8 +6,8 @@ LABELS = {'Market Value':'Valor de mercado', 'TIR ponderada':'TIR ponderada por 
           'Macaulay':'Duration Macaulay (años)', 'Modified':'Modified duration (años)',
           'WAL':'WAL (años)', 'Convexity':'Convexidad', 'Aporte duration':'Aporte a duration (años)',
           'Flujos':'Flujos futuros', 'Peso':'Peso en cartera'}
-PERCENT = {'TIR','Peso','TIR ponderada','Portfolio XIRR','ΔP/P duration','ΔP/P convexity'}
-MONEY = {'Market Value','Renta','Amortización','Total','Flujo Total','Flujos','Importe próximo pago','ΔMV duration','ΔMV convexity','Nominal'}
+PERCENT = {'TIR','Peso','TIR ponderada','Portfolio XIRR','ΔP/P duration','ΔP/P convexity','Peso consolidado'}
+MONEY = {'Market Value','Renta','Amortización','Total','Flujo Total','Flujos','Importe próximo pago','ΔMV duration','ΔMV convexity','Nominal','Valor consolidado','Valor de mercado original'}
 YEARS = {'Macaulay','Modified','WAL','Aporte duration','Convexity'}
 
 

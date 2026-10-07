@@ -18,5 +18,5 @@ def validate_portfolio(payments, positions, valuation):
         elif f['Amortización'].sum() == 0:
             add('warning', ticker, 'Sin amortización futura: WAL no definida; comprobar completitud')
     if positions.Moneda.nunique() > 1:
-        add('warning', 'Moneda', 'Monedas múltiples: análisis separado por moneda, sin conversión FX')
+        add('warning', 'Moneda', 'Monedas múltiples: métricas por moneda; consolidación patrimonial requiere TC explícito')
     return future, issues
