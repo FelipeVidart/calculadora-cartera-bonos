@@ -33,3 +33,14 @@ def ladder(payments, frequency):
     df = payments.copy()
     df['Período'] = df.Fecha.dt.to_period(frequency).astype(str)
     return df.groupby('Período')[['Renta', 'Amortización', 'Flujo Total']].sum()
+
+
+def issuer_concentration(instruments):
+    """Issuer exposure within the selected currency; missing issuers stay visible."""
+    df = instruments.copy()
+    df['Emisor'] = df.Emisor.fillna('').astype(str).str.strip().replace('', 'Sin emisor informado')
+    grouped = df.groupby('Emisor', sort=False).agg(
+        **{'Market Value': ('Market Value', 'sum'), 'Peso': ('Peso', 'sum'),
+           'Aporte duration': ('Aporte duration', 'sum'),
+           'Instrumentos': ('Ticker', lambda x: ', '.join(sorted(x)))})
+    return grouped.sort_values('Market Value', ascending=False).reset_index()

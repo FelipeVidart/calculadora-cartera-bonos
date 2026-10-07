@@ -63,3 +63,11 @@ Los archivos cargados se procesan en memoria y no se guardan automáticamente. E
 4. Desplegar y probar primero con la opción **Usar ejemplo sintético**.
 
 La app instala las dependencias desde `requirements.txt`. Para usar datos reales de clientes, configurar acceso restringido y confirmar que el alojamiento está aprobado por la empresa. Esta V1 no incorpora autenticación propia. Los archivos se procesan en memoria, pero se transmiten al servidor que aloja la aplicación.
+
+## Presentación y concentración
+
+La interfaz se organiza en Resumen, Instrumentos, Flujos y Riesgos. Los resultados muestran moneda y fecha de valuación. El resumen incluye valor de mercado, ambas TIR, modified duration y WAL. La vista de emisores suma valor de mercado, peso y aporte a duration, y permite consultar los instrumentos de cada emisor.
+
+Los emisores se agrupan por el nombre informado, quitando espacios externos; no se infieren grupos económicos ni se unifican nombres diferentes automáticamente. Completar nombres consistentemente. Los emisores faltantes aparecen bajo “Sin emisor informado”. Cada agrupación corresponde únicamente a la moneda seleccionada.
+
+El CSV de instrumentos incorpora moneda y fecha de valuación. El Excel incluye hojas Contexto y Emisores, además del detalle existente. Los formatos visuales no redondean los valores utilizados por el motor. La suite actual contiene 32 tests.
