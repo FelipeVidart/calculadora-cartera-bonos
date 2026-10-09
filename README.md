@@ -87,3 +87,17 @@ En Rebalanceo elegir instrumento vendido, importe a reemplazar (hasta el valor d
 Se supone misma moneda de pagos, reinversión completa de igual importe, sin costos, sin aportes/retiros y métricas constantes de las posiciones restantes. La simulación es independiente de la cartera real; no modifica posiciones ni inventa flujos de compra, TIR o concentración posteriores. Si la duration necesaria es negativa, el objetivo no es alcanzable con una compra de duration no negativa bajo esos supuestos. El Excel conserva los parámetros y resultados de la simulación cuando el importe es positivo.
 
 La suite actual contiene 35 tests, incluyendo conversiones, consolidación, simulación manual y recorrido Streamlit con cartera multimoneda.
+
+## Fondos de renta fija
+
+Después de cargar los pagos y posiciones de bonos/ON, abrir **Agregar fondos de renta fija**, seleccionar fondo y clase e ingresar el valor de cada tenencia, moneda de clase y moneda del valor ingresado. Las posiciones de fondos se cargan en la interfaz y no necesitan pagos inventados. Esta etapa requiere al menos una posición de bonos/ON; no es todavía un analizador de carteras exclusivamente de fondos. Los imports y selecciones no se guardan como cartera en servidor.
+
+El catálogo de esta versión se importó del export web actualizado de plataforma-inversiones (generado 09/10/2026): 22 fondos/clases elegibles de 29 fondos. Incluye categorías explícitas de renta fija, corporativos, soberanos y combinaciones con cash. Excluye equity, mixtos, cash puro y fondos denominados money market. Sólo se conserva la edición seleccionada y datos de identificación y métricas necesarios, no el maestro privado ni notas de clientes. No hay sincronización directa con Notion ni cotización de cuotapartes. Para refrescar: `python -m scripts.import_funds_catalog /ruta/web/public/data/funds.json`, revisar diferencias y desplegar.
+
+Los fondos suman al patrimonio convertido y su distribución. La gestora aparece con prefijo `Gestora:` en la agrupación: no representa concentración en los emisores subyacentes. No hay look-through automático. El resumen de bonos/ON, XIRR, sensibilidad, flujos y simulador mantienen el universo de bonos/ON claramente separado.
+
+La pestaña Fondos muestra duration publicada, unidad, fecha y referencia documental; una duration sin tipo especificado no se interpreta como modified duration. Actualmente ninguna de las 22 clases tiene modified duration identificada. Yield informado tampoco se interpreta como XIRR de la cuotaparte. No se generan cash flows, WAL ni convexidad para fondos.
+
+La cobertura se calcula por moneda: valor con duration compatible / valor total (bonos + fondos). Sólo se admite modified duration de fondo revisada, con unidad años y fecha no futura, antigüedad máxima de 90 días. La duration de la porción cubierta se calcula con su propio valor como denominador; el aporte conocido sobre total no es una duration completa y no trata los faltantes como cero. Los tipos de duration efectivos o no identificados quedan excluidos. Antes de admitir nuevas métricas es necesario revisar que sus convenciones de sensibilidad sean compatibles con el motor de bonos.
+
+El Excel incluye Fondos y Cobertura fondos, además del patrimonio total y las hojas existentes de bonos/ON. La suite actual contiene 39 tests, incluyendo selección de fondos y conservación de la XIRR de bonos, filtros y cobertura de datos faltantes/futuros/antiguos.

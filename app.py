@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 from datetime import date
 from io import BytesIO
 import pandas as pd
@@ -8,6 +10,7 @@ from src.portfolio.analytics import analyze, ladder, issuer_concentration
 from src.portfolio.scenarios import scenarios
 from src.portfolio.currencies import normalize_positions, consolidate
 from src.portfolio.rebalance import simulate
+from src.portfolio.funds import duration_coverage
 from src.presentation.views import display_table, horizontal_chart, sensitivity_chart
 
 st.set_page_config(page_title='Cartera de bonos', layout='wide')
@@ -48,6 +51,32 @@ if issues:
 if any(x['Nivel'] == 'error' for x in issues):
     st.error('Corregí los errores en los archivos antes de calcular.')
     st.stop()
+bond_positions = positions.copy()
+catalog = json.loads((Path(__file__).parent / 'data/fixed_income_funds.json').read_text())
+classes = catalog['classes']
+labels = {r['class_id']: f"{r['Nombre']} · {r['Clase']}" for r in classes}
+with st.expander('Agregar fondos de renta fija', expanded=False):
+    st.caption(f"Catálogo importado: {catalog['meta']['generated_at']} · No se sincroniza automáticamente con Notion. Excluye equity, mixtos y money market.")
+    picks = st.multiselect('Fondos de la cartera', list(labels), format_func=lambda x: labels[x])
+    fund_rows = []
+    for row in classes:
+        if row['class_id'] not in picks: continue
+        st.write(labels[row['class_id']])
+        amount_fund = st.number_input('Valor de mercado de la tenencia', min_value=0.0, value=0.0, key='mv_'+row['class_id'])
+        denomination = st.selectbox('Moneda de la clase (confirmar)', ['USD','ARS'], index=0 if row['Moneda']=='USD' else 1, key='ccy_'+row['class_id'])
+        mv_currency = st.selectbox('Moneda del valor ingresado', ['USD','ARS'], index=0 if denomination=='USD' else 1, key='mvc_'+row['class_id'])
+        if row['Moneda'] not in ['USD','ARS']:
+            st.warning('La moneda de esta clase no está confirmada en el catálogo; verificá la elegida.')
+        elif denomination != row['Moneda']:
+            st.warning('La moneda elegida difiere del catálogo; verificá la clase.')
+        if amount_fund <= 0:
+            st.warning('Ingresá un valor positivo para incluir esta posición.')
+        else:
+            fund_rows.append({**row, 'Ticker':row['class_id'], 'Market Value':amount_fund,'Nominal':None,
+                              'Moneda':denomination,'Moneda MV':mv_currency,'Emisor':'Gestora: '+row['Gestora'], 'Tipo':'Fondo'})
+fund_positions = pd.DataFrame(fund_rows)
+if len(fund_positions):
+    positions = pd.concat([positions, fund_positions], ignore_index=True)
 needs_fx = positions.Moneda.nunique() > 1 or (positions.Moneda != positions['Moneda MV']).any()
 fx = 1.0
 fx_date = valuation
@@ -77,6 +106,8 @@ else:
         consolidated, consolidated_issuers, currency_exposure = consolidate(positions, base, fx)
 if positions.Moneda.nunique() > 1:
     st.warning('TIR, duration y sensibilidad se calculan por moneda de pagos. El patrimonio consolidado no tiene una TIR multimoneda.')
+funds_all = positions.loc[positions.Ticker.isin([r['class_id'] for r in fund_rows])].copy()
+positions = positions.loc[positions.Ticker.isin(bond_positions.Ticker)].copy()
 currency = st.selectbox('Moneda de análisis', sorted(positions.Moneda.unique()))
 positions = positions[positions.Moneda == currency]
 future = future[future.Ticker.isin(positions.Ticker)]
@@ -88,7 +119,7 @@ except ValueError as e:
 st.info(f"Moneda: {currency} · Fecha de valuación: {valuation:%d/%m/%Y}")
 issuers = issuer_concentration(instruments)
 sens = scenarios(summary)
-resume_tab, instruments_tab, flows_tab, risk_tab, rebalance_tab = st.tabs(['Resumen', 'Instrumentos', 'Flujos', 'Riesgos', 'Rebalanceo'])
+resume_tab, instruments_tab, flows_tab, risk_tab, rebalance_tab, funds_tab = st.tabs(['Resumen', 'Instrumentos', 'Flujos', 'Riesgos', 'Rebalanceo', 'Fondos'])
 with resume_tab:
     if consolidated is not None:
         st.subheader(f'Patrimonio consolidado · {base}')
@@ -97,7 +128,9 @@ with resume_tab:
         st.dataframe(display_table(currency_exposure), hide_index=True)
         st.dataframe(display_table(consolidated_issuers), hide_index=True)
         st.altair_chart(horizontal_chart(consolidated_issuers, 'Emisor', 'Peso consolidado', percent=True), use_container_width=True)
-    st.subheader(f'Resumen de cartera · {currency}')
+    st.subheader(f'Resumen de bonos y ON · {currency}')
+    if len(funds_all):
+        st.warning('Las TIR, duration, WAL, flujos y escenarios de abajo corresponden sólo a bonos y ON. Los fondos se incluyen en patrimonio; ver cobertura en Fondos.')
     cols = st.columns(3)
     cols[0].metric('Valor de mercado', f"{summary['Market Value']:,.2f} {currency}")
     cols[1].metric('TIR ponderada por valor de mercado', f"{summary['TIR ponderada']:.2%}")
@@ -108,7 +141,7 @@ with resume_tab:
     st.caption('La TIR ponderada promedia tasas individuales; Portfolio XIRR descuenta los flujos agregados contra el valor de mercado total.')
     st.dataframe(display_table(pd.DataFrame([summary])), hide_index=True)
     st.subheader('Concentración por emisor')
-    st.caption('Pesos y aportes calculados sobre la cartera de la moneda seleccionada. Los emisores sin informar se muestran juntos; no se infieren grupos económicos.')
+    st.caption('Sólo bonos y ON. Pesos y aportes calculados sobre la cartera de la moneda seleccionada. Los emisores sin informar se muestran juntos; no se infieren grupos económicos.')
     st.dataframe(display_table(issuers), hide_index=True)
     st.altair_chart(horizontal_chart(issuers, 'Emisor', 'Peso', percent=True), use_container_width=True)
     selected_issuer = st.selectbox('Detalle de emisor', issuers.Emisor.tolist())
@@ -139,7 +172,8 @@ with risk_tab:
     st.dataframe(display_table(sens), hide_index=True)
     st.altair_chart(sensitivity_chart(sens), use_container_width=True)
 with rebalance_tab:
-    st.subheader(f'Duration objetivo · {currency}')
+    st.subheader(f'Duration objetivo de bonos y ON · {currency}')
+    if len(funds_all): st.info('El simulador excluye fondos: no hay duration compatible disponible para todas esas posiciones.')
     st.caption('Reemplazo de igual valor de mercado, dentro de la moneda seleccionada, reinversión completa y sin costos. La compra es hipotética: no genera TIR ni calendario nuevos. Duration no equivale a vencimiento.')
     sell_ticker = st.selectbox('Instrumento a vender', instruments.Ticker.tolist())
     sale = instruments.loc[instruments.Ticker == sell_ticker].iloc[0]
@@ -155,6 +189,26 @@ with rebalance_tab:
         st.caption('D final = D actual + (importe reemplazado / valor de cartera) × (D compra − D venta). La venta no puede superar la posición disponible.')
     else:
         st.info('Ingresá un importe de venta mayor que cero para simular.')
+with funds_tab:
+    st.subheader('Fondos de renta fija en cartera')
+    st.caption('La gestora no es el emisor de los activos del fondo. La agrupación patrimonial usa “Gestora:” y no representa exposición crediticia subyacente. No hay look-through automático.')
+    coverage_rows = []
+    if len(funds_all):
+        st.dataframe(display_table(funds_all[['Nombre','Clase','Market Value','Moneda','Moneda MV','Gestora','Categoría','Duration publicada','Unidad publicada','Fecha publicada','Modified','Fecha duration','Fuente']]), hide_index=True)
+        st.warning('Duration publicada sin tipo identificado es informativa: no se convierte a modified duration. Yield publicado no es una XIRR de la cuotaparte. No se generan flujos, WAL ni convexidad del fondo.')
+        for ccy in sorted(funds_all.Moneda.unique()):
+            b = instruments if currency == ccy else pd.DataFrame(columns=['Market Value','Modified'])
+            if currency != ccy:
+                other = bond_positions[bond_positions.Moneda == ccy].copy()
+                if len(other):
+                    other = normalize_positions(other, fx) if needs_fx else other
+                    b, _ = analyze(payments.loc[(payments.Fecha > pd.Timestamp(valuation)) & payments.Ticker.isin(other.Ticker)], other, valuation)
+            cov = duration_coverage(b, funds_all[funds_all.Moneda == ccy], valuation)
+            coverage_rows.append({'Moneda':ccy, **cov})
+        st.dataframe(pd.DataFrame(coverage_rows).style.format({'Valor total renta fija':'{:,.2f}','Cobertura duration':'{:.2%}','Cobertura flujos':'{:.2%}','Duration porción cubierta':'{:.2f}','Aporte conocido sobre total':'{:.2f}'}, na_rep='Sin dato'), hide_index=True)
+        st.caption('La duration de la porción cubierta no es la duration de toda la cartera. El aporte conocido sobre total no supone duration cero para lo desconocido. Sólo se admite modified duration revisada, con fecha no futura y antigüedad máxima de 90 días.')
+    else:
+        st.info('Seleccioná fondos e ingresá valores positivos en “Agregar fondos de renta fija”.')
 with st.expander('Supuestos y fórmulas'):
     st.markdown('''**t = días reales / 365**. MV = Σ CF / (1+y)^t; y es anual efectiva, mayor que −100%.
 
@@ -168,13 +222,16 @@ La TIR no es rendimiento garantizado; supone cumplimiento de los flujos. Duratio
 # Export analyzed data; client uploads are kept in memory only.
 out = BytesIO()
 with pd.ExcelWriter(out, engine='openpyxl') as writer:
-    pd.DataFrame([{'Fecha de valuación': pd.Timestamp(valuation), 'Moneda de análisis': currency, 'Moneda base': base, 'TC ARS/USD': fx if needs_fx else None, 'Fecha TC': pd.Timestamp(fx_date) if needs_fx else None, 'Fuente TC': fx_source, 'Convención': 'ACT/365 fijo; tasa efectiva anual'}]).to_excel(writer, sheet_name='Contexto', index=False)
+    pd.DataFrame([{'Fecha de valuación': pd.Timestamp(valuation), 'Moneda de análisis': currency, 'Moneda base': base, 'TC ARS/USD': fx if needs_fx else None, 'Fecha TC': pd.Timestamp(fx_date) if needs_fx else None, 'Fuente TC': fx_source, 'Catálogo fondos generado': catalog['meta']['generated_at'], 'Fuente catálogo fondos': catalog['source'], 'Convención': 'ACT/365 fijo; tasa efectiva anual'}]).to_excel(writer, sheet_name='Contexto', index=False)
     if consolidated is not None:
         consolidated.to_excel(writer, sheet_name='Patrimonio', index=False)
         consolidated_issuers.to_excel(writer, sheet_name='Emisores consolidados', index=False)
         currency_exposure.to_excel(writer, sheet_name='Monedas', index=False)
     if amount > 0:
         pd.DataFrame([{**result, 'Instrumento vendido': sell_ticker, 'Moneda': currency, 'Duration venta': float(sale.Modified), 'Duration compra hipotética': purchase}]).to_excel(writer, sheet_name='Rebalanceo', index=False)
+    if len(funds_all):
+        funds_all.to_excel(writer, sheet_name='Fondos', index=False)
+        pd.DataFrame(coverage_rows).to_excel(writer, sheet_name='Cobertura fondos', index=False)
     issuers.to_excel(writer, sheet_name='Emisores', index=False)
     exported.to_excel(writer, sheet_name='Instrumentos', index=False)
     pd.DataFrame([summary]).to_excel(writer, sheet_name='Cartera', index=False)
